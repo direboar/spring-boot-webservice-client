@@ -1,0 +1,122 @@
+
+// クライアント側は、wsdlを元にプロキシコードを生成する。
+task wsdl2Java {
+    group = "devtool"
+    description = "generate proxy code from wsdl."
+
+    ext.sourcesDir = "${buildDir}/generated-sources/jaxb"
+    ext.classesDir = "${buildDir}/classes/jaxb"
+    ext.schema = "src/main/resources/countries.wsdl"
+
+    outputs.dir classesDir
+
+    doLast() {
+        project.ant {
+            taskdef name: "xjc", classname: "com.sun.tools.xjc.XJCTask",
+                    classpath: configurations.jaxb.asPath
+            mkdir(dir: sourcesDir)
+            mkdir(dir: classesDir)
+
+            xjc(destdir: sourcesDir, schema: schema,
+                    package: "hello.wsdl") {
+                arg(value: "-wsdl")
+                produces(dir: sourcesDir, includes: "**/*.java")
+            }
+
+            javac(destdir: classesDir, source: 1.8, target: 1.8, debug: true,
+                    debugLevel: "lines,vars,source",
+                    classpath: configurations.jaxb.asPath) {
+                src(path: sourcesDir)
+                include(name: "**/*.java")
+                include(name: "*.java")
+            }
+
+            copy(todir: classesDir) {
+                fileset(dir: sourcesDir, erroronmissingdir: false) {
+                    exclude(name: "**/*.java")
+                }
+            }
+        }
+    }
+}
+
+configurations {
+    //spring devtoolを開発中のみに適用するための設定。
+	developmentOnly
+	runtimeClasspath {
+		extendsFrom developmentOnly
+	}
+	
+	//SOAPのための設定
+	jaxb 
+}
+
+//プロダクトコードではなく、ビルドスクリプト( build.gradle )内で利用するプラグインや依存関係の定義については buildscript に定義します。
+buildscript {
+    //maven repositoryを設定
+    repositories {
+        mavenCentral()
+    }
+    //Spring Boot gradle plugin provides many convenient features:
+    //1.クラスパス上のすべてのjarを集めて、実行可能な単一の "über-jar"を構築します。これにより、サービスの実行と転送がより便利になります。
+    //2.mainメソッドが定義されているクラスを探します。
+    //3.Spring Bootの依存関係に一致するようにバージョン番号を設定する組み込みの依存関係リゾルバを提供します。
+    //https://docs.spring.io/spring-boot/docs/current/gradle-plugin/reference/html/#getting-started これは読んだ方がよさそう。
+    dependencies {
+        classpath("org.springframework.boot:spring-boot-gradle-plugin:2.0.5.RELEASE")
+    }
+}
+
+apply plugin: 'java'
+apply plugin: 'eclipse'
+apply plugin: 'org.springframework.boot'
+apply plugin: 'io.spring.dependency-management'
+
+//Spring Boot gradle pluginに指定する、SpringBootの実行可能JAR
+bootJar {
+    baseName = 'gs-rest-service'
+    version =  '0.1.0'
+    
+	//SOAPのための設定 jaxbで自動生成されたクラスを認識するためか。
+    from wsdl2Java.classesDir
+}
+
+//ビルド時のmaven repository
+repositories {
+    mavenCentral()
+}
+
+//ソースコードのバージョン
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+//dependency
+dependencies {
+    //rest
+    compile("org.springframework.boot:spring-boot-starter-web")
+    //jaxwsサーバー。 ガイドにはない。
+    compile("org.springframework.boot:spring-boot-starter-web-services")
+    
+    testCompile('org.springframework.boot:spring-boot-starter-test'){
+        //juni4を除外
+        exclude group: 'junit' , module: 'junit'
+    }
+    //junit5
+    //https://mike-neck.hatenadiary.com/entry/2018/03/02/073000
+    testCompile ("org.junit.jupiter:junit-jupiter-api:5.1.0")
+    testRuntime ("org.junit.jupiter:junit-jupiter-engine:5.1.0")
+
+    //SOAP Consumer（サーバー）
+    //JAXBで生成されたクラスをパスに設定する。
+    //@see https://spring.io/guides/gs/producing-web-service/     
+    compile("wsdl4j:wsdl4j:1.6.1")
+    jaxb("org.glassfish.jaxb:jaxb-xjc:2.2.11")
+    compile(files(wsdl2Java.classesDir).builtBy(wsdl2Java))
+    
+    //devtools
+    developmentOnly("org.springframework.boot:spring-boot-devtools") //開発時のみ有効。
+}
+
+task afterEclipseImport {
+    dependsOn wsdl2Java
+}
